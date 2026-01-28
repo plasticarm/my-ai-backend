@@ -1,44 +1,43 @@
-// server.js (Pro Version)
+// server.js (Fixed Model Names)
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-// We use the new Unified SDK for Image Generation support
 const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
 app.use(cors());
-// INCREASE LIMIT: This prevents "Payload Too Large" crashes when sending long prompts
 app.use(express.json({ limit: '10mb' })); 
 
 const genAI = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-// 1. Chat Endpoint (Text)
+// 1. Text Chat Endpoint
 app.post('/chat', async (req, res) => {
     try {
         const { message } = req.body;
-        // Use Gemini 1.5 Flash for fast text chat
+        
+        // FIX: Use specific version 'gemini-1.5-flash-001' instead of generic alias
         const result = await genAI.models.generateContent({
-            model: 'gemini-1.5-flash',
+            model: 'gemini-1.5-flash-001', 
             contents: message
         });
         
-        // The new SDK structure is slightly different
-        const text = result.response.candidates[0].content.parts[0].text;
+        // Handle response safely
+        const text = result.response?.candidates?.[0]?.content?.parts?.[0]?.text || "No response text found.";
         res.json({ reply: text });
     } catch (error) {
         console.error("Chat Error:", error);
+        // This will print the exact reason to your Render logs if it fails again
         res.status(500).json({ error: error.message });
     }
 });
 
-// 2. Image Endpoint (Real Visuals)
+// 2. Image Generation Endpoint
 app.post('/image', async (req, res) => {
     try {
         const { prompt } = req.body;
         console.log("Generating image for:", prompt);
 
-        // Use Imagen 3 (Standard) or Gemini 2.5 Flash Image depending on access
-        // 'imagen-3.0-generate-001' is the standard image model
+        // FIX: Use the specific ID for Imagen 3
         const response = await genAI.models.generateImages({
             model: 'imagen-3.0-generate-001',
             prompt: prompt,
@@ -48,15 +47,18 @@ app.post('/image', async (req, res) => {
             }
         });
 
-        // Get the base64 image data
-        const imageBase64 = response.generatedImages[0].image.imageBytes;
-        const imageUrl = `data:image/png;base64,${imageBase64}`;
+        const imageBase64 = response.generatedImages?.[0]?.image?.imageBytes;
+        
+        if (imageBase64) {
+            const imageUrl = `data:image/png;base64,${imageBase64}`;
+            res.json({ imageUrl: imageUrl });
+        } else {
+            throw new Error("No image data returned from Google.");
+        }
 
-        res.json({ imageUrl: imageUrl });
     } catch (error) {
         console.error("Image Gen Error:", error);
-        // Fallback: If image fails, return a text description so the app doesn't break
-        res.status(500).json({ error: "Image generation failed. Check API Key permissions." });
+        res.status(500).json({ error: error.message });
     }
 });
 
