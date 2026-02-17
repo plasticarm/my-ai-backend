@@ -1,59 +1,100 @@
-// server.js (Fixed Model Names)
+// server.js (The Master Brain)
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
-app.use(cors());
+
+// 1. SECURITY: Whitelist your apps
+// Add every new app URL here so they can talk to this server
+const allowedOrigins = [
+  'http://localhost:5173',                   // Local Development
+  'https://lumina-gallery-builder.vercel.app', // Your deployed Lumina App
+  'https://die-a-log-studio.vercel.app/',    // Your deployed Die-A-Log Studio App
+  // Future: 'https://my-audio-app.vercel.app'
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) === -1) {
+      // Optional: Un-comment the next line to strictly block unknown sites
+      // return callback(new Error('CORS policy: Origin not allowed'), false);
+    }
+    return callback(null, true);
+  }
+}));
+
 app.use(express.json({ limit: '10mb' })); 
 
 const genAI = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-// 1. Text Chat Endpoint
-app.post('/chat', async (req, res) => {
+/**
+ * 2. GENERIC TEXT/JSON ENDPOINT
+ * This endpoint is flexible. It lets the frontend decide:
+ * - Which model to use (Flash, Pro, etc.)
+ * - If it wants JSON or Text
+ * - What the System Instructions are
+ */
+app.post('/api/google/generate', async (req, res) => {
     try {
-        const { message } = req.body;
-        
-        // FIX: Use specific version 'gemini-1.5-flash-001' instead of generic alias
+        // Extract generic config from the frontend request
+        // Default to 'gemini-1.5-flash' if frontend doesn't specify
+        const { 
+            contents, 
+            model = 'gemini-1.5-flash', 
+            config 
+        } = req.body;
+
+        console.log(`🧠 Generating with ${model}...`);
+
         const result = await genAI.models.generateContent({
-            model: 'gemini-1.5-flash-001', 
-            contents: message
+            model: model,
+            contents: contents, // Pass the full conversation or string
+            config: config      // Pass systemInstruction, temperature, jsonSchema here
         });
+
+        // Return the full result so the frontend can parse what it needs
+        // (Text, function calls, usage metadata, etc.)
+        res.json(result); 
         
-        // Handle response safely
-        const text = result.response?.candidates?.[0]?.content?.parts?.[0]?.text || "No response text found.";
-        res.json({ reply: text });
     } catch (error) {
-        console.error("Chat Error:", error);
-        // This will print the exact reason to your Render logs if it fails again
+        console.error("Generative Error:", error);
         res.status(500).json({ error: error.message });
     }
 });
 
-// 2. Image Generation Endpoint
-app.post('/image', async (req, res) => {
+/**
+ * 3. GENERIC IMAGE ENDPOINT
+ * Handles aspect ratios and number of images dynamically
+ */
+app.post('/api/google/image', async (req, res) => {
     try {
-        const { prompt } = req.body;
-        console.log("Generating image for:", prompt);
+        const { prompt, aspectRatio = '1:1', numberOfImages = 1 } = req.body;
+        
+        console.log(`🎨 Generating image: ${prompt}`);
 
-        // FIX: Use the specific ID for Imagen 3
         const response = await genAI.models.generateImages({
             model: 'imagen-3.0-generate-001',
             prompt: prompt,
             config: {
-                numberOfImages: 1,
-                aspectRatio: '1:1'
+                numberOfImages: numberOfImages,
+                aspectRatio: aspectRatio,
+                // Add 'safetySettings' here if needed later
             }
         });
 
-        const imageBase64 = response.generatedImages?.[0]?.image?.imageBytes;
-        
-        if (imageBase64) {
-            const imageUrl = `data:image/png;base64,${imageBase64}`;
-            res.json({ imageUrl: imageUrl });
+        // Helper: Convert raw bytes to usable Data URL immediately
+        const images = response.generatedImages?.map(img => 
+            `data:image/png;base64,${img.image.imageBytes}`
+        ) || [];
+
+        if (images.length > 0) {
+            res.json({ images: images });
         } else {
-            throw new Error("No image data returned from Google.");
+            throw new Error("No image data returned.");
         }
 
     } catch (error) {
@@ -63,4 +104,4 @@ app.post('/image', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Master Brain running on port ${PORT}`));
